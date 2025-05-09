@@ -1,7 +1,9 @@
 from flask import Flask, render_template_string, request, jsonify, session
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Zorg voor een geheime sleutel voor sessies
+socketio = SocketIO(app)  # Voeg SocketIO toe aan de app
 
 # Lijst om berichten op te slaan
 messages = []
@@ -51,7 +53,10 @@ html_content = """
         <button onclick="sendMessage()">Send</button>
     </div>
 
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script>
+        const socket = io.connect('http://' + document.domain + ':' + location.port);
+
         // Functie om gebruikersnaam in sessie op te slaan
         function setUsername() {
             const username = document.getElementById('username').value;
@@ -96,53 +101,12 @@ html_content = """
             const username = document.getElementById('username').value;
             const message = messageInput.value;
             if (message && username) {
-                fetch('/send', {
-                    method: 'POST',
-                    body: new URLSearchParams({ username: username, message: message }),
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                })
-                .then(response => response.json())
-                .then(() => {
-                    loadMessages();  // Herlaad berichten
-                    messageInput.value = '';  // Maak het invoerveld leeg
-                });
+                socket.emit('send_message', { username: username, message: message });
+                messageInput.value = '';  // Maak het invoerveld leeg
             } else {
                 alert("Please enter a message.");
             }
         }
 
-        // Laad berichten wanneer de pagina wordt geladen
-        window.onload = loadMessages;
-    </script>
-</body>
-</html>
-"""
+        // Ontvang berichten van
 
-@app.route('/')
-def index():
-    return render_template_string(html_content)
-
-@app.route('/set_username', methods=['POST'])
-def set_username():
-    username = request.form['username']
-    session['username'] = username  # Sla de gebruikersnaam op in de sessie
-    return jsonify({'status': 'Username set'})
-
-@app.route('/send', methods=['POST'])
-def send_message():
-    if 'username' in session:
-        username = session['username']
-        message = request.form['message']
-        messages.append({'username': username, 'text': message})  # Voeg bericht toe met gebruikersnaam
-        return jsonify(messages)
-    else:
-        return jsonify({'error': 'No username set'}), 400
-
-@app.route('/get_messages')
-def get_messages():
-    return jsonify(messages)  # Retourneer berichten
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
