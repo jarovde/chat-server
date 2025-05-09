@@ -79,5 +79,10 @@ def delete_user():
 def admin_page():
     return send_from_directory('.', 'admin.html')
 
+# Route voor de hoofdpagina
+@app.route('/')
+def home():
+    return 'Welkom bij de chatserver!'
+
 if __name__ == '__main__':
     app.run(debug=True)
