@@ -1,194 +1,230 @@
-from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for, escape
+import sqlite3
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'
-socketio = SocketIO(app)
+app.secret_key = 'your_secret_key'  # Zorg voor een geheime sleutel voor sessies
+socketio = SocketIO(app)  # Voeg SocketIO toe aan de app
 
-messages = []
-users = {}  # gebruikersnaam: wachtwoord_hash
-banned_users = []
-
+# Admin gebruikersnaam
 ADMIN_USERNAME = 'jarovde'
 
+# HTML-template voor de frontend
 html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Chat App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Application</title>
     <style>
-        body { font-family: Arial; padding: 20px; }
-        #messages { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
-        input[type="text"], input[type="password"] { width: 80%; padding: 10px; }
-        button { padding: 10px; }
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+        }
+        input[type="text"] {
+            width: 80%;
+            padding: 10px;
+        }
+        button {
+            padding: 10px;
+        }
     </style>
 </head>
 <body>
-    <h1>Chat App</h1>
-
-    <div id="login-section" style="{{ 'display:none;' if logged_in else '' }}">
+    <h1>Chat Application</h1>
+    
+    <!-- Login sectie -->
+    <div id="login-section">
         <h2>Login</h2>
         <form action="/login" method="POST">
-            <label>Username:</label><br>
-            <input type="text" name="username" required><br><br>
-            <label>Password:</label><br>
-            <input type="password" name="password" required><br><br>
+            <label for="username">Username:</label><br>
+            <input type="text" id="username" name="username" required><br><br>
+            <label for="password">Password:</label><br>
+            <input type="password" id="password" name="password" required><br><br>
             <button type="submit">Login</button>
         </form>
-        <p>No account? <a href="/register">Register</a></p>
+        <p>Don't have an account? <a href="/register">Register here</a></p>
     </div>
 
-    <div id="chat-section" style="{{ '' if logged_in else 'display:none;' }}">
-        <h2>Welcome, {{ username }}!</h2>
-        <div id="messages"></div>
-        <input type="text" id="messageInput" placeholder="Message...">
-        <button onclick="sendMessage()">Send</button>
+    <!-- Register sectie -->
+    <div id="register-section" style="display:none;">
+        <h2>Register</h2>
+        <form action="/register" method="POST">
+            <label for="new_username">Username:</label><br>
+            <input type="text" id="new_username" name="username" required><br><br>
+            <label for="new_password">Password:</label><br>
+            <input type="password" id="new_password" name="password" required><br><br>
+            <button type="submit">Register</button>
+        </form>
+        <p>Already have an account? <a href="/">Login here</a></p>
+    </div>
 
-        {% if is_admin %}
-        <br><br>
-        <h3>Ban/unban gebruiker</h3>
-        <input type="text" id="banUserInput" placeholder="Username to ban/unban">
-        <button onclick="banUser()">Ban</button>
-        <button onclick="unbanUser()">Unban</button>
-        {% endif %}
-        
-        <br><br><a href="/logout">Logout</a>
+    <div id="chat-section" style="display:none;">
+        <h2>Chat Room</h2>
+        <div id="messages"></div>
+        <input type="text" id="messageInput" placeholder="Type a message...">
+        <button onclick="sendMessage()">Send</button>
     </div>
 
     <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script>
-        const socket = io();
-        const username = "{{ username }}";
+        const socket = io.connect('http://' + document.domain + ':' + location.port);
 
+        // Functie om berichten op te halen van de server
         function loadMessages() {
             fetch('/get_messages')
-                .then(res => res.json())
+                .then(response => response.json())
                 .then(data => {
                     const messagesDiv = document.getElementById('messages');
-                    messagesDiv.innerHTML = '';
-                    data.forEach(msg => {
-                        const el = document.createElement('p');
-                        el.textContent = msg.username + ": " + msg.text;
-                        messagesDiv.appendChild(el);
+                    messagesDiv.innerHTML = '';  // Verwijder oude berichten
+                    data.forEach(message => {
+                        const messageElement = document.createElement('p');
+                        messageElement.textContent = message.username + ": " + message.text;
+                        messagesDiv.appendChild(messageElement);
                     });
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;  // Scroll naar beneden
                 });
         }
 
+        // Functie om een bericht naar de server te sturen
         function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const msg = input.value;
-            if (msg) {
-                socket.emit('send_message', { username: username, message: msg });
-                input.value = '';
+            const messageInput = document.getElementById('messageInput');
+            const username = document.getElementById('username').value;
+            const message = messageInput.value;
+            if (message && username) {
+                socket.emit('send_message', { username: username, message: message });
+                messageInput.value = '';  // Maak het invoerveld leeg
+            } else {
+                alert("Please enter a message.");
             }
         }
 
-        function banUser() {
-            const user = document.getElementById('banUserInput').value;
-            fetch('/ban_user', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'username=' + encodeURIComponent(user)
-            }).then(res => res.json()).then(alert);
-        }
-
-        function unbanUser() {
-            const user = document.getElementById('banUserInput').value;
-            fetch('/unban_user', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'username=' + encodeURIComponent(user)
-            }).then(res => res.json()).then(alert);
-        }
-
-        socket.on('new_message', () => loadMessages());
-
-        window.onload = function () {
+        // Ontvang berichten van de server in real-time
+        socket.on('new_message', function(data) {
             loadMessages();
-            setInterval(loadMessages, 2000);
+        });
+
+        // Laad berichten wanneer de pagina wordt geladen
+        window.onload = function() {
+            loadMessages();
+            setInterval(loadMessages, 2000);  // Haal elke 2 seconden nieuwe berichten op
         };
     </script>
 </body>
 </html>
 """
 
-@app.route('/')
-def index():
-    return redirect(url_for('chat'))
+def init_db():
+    conn = sqlite3.connect('data.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS ips (ip TEXT PRIMARY KEY, username TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS banned (username TEXT PRIMARY KEY)''')
+    conn.commit()
+    conn.close()
 
+# Invoer naar de database voor gebruikers, IP-adressen en bannen
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
+        ip = request.remote_addr
+        conn = sqlite3.connect('data.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM ips WHERE ip=?", (ip,))
+        if c.fetchone():
+            conn.close()
+            return "This device already registered an account.", 403
         username = request.form['username']
         password = request.form['password']
-        if username in users:
+        c.execute("SELECT * FROM users WHERE username=?", (username,))
+        if c.fetchone():
+            conn.close()
             return "Username already exists", 400
-        users[username] = generate_password_hash(password)
+        c.execute("INSERT INTO users VALUES (?, ?)", (username, generate_password_hash(password)))
+        c.execute("INSERT INTO ips VALUES (?, ?)", (ip, username))
+        conn.commit()
+        conn.close()
         return redirect(url_for('login'))
-    return render_template_string(html_content, logged_in=False, username='', is_admin=False)
+    return render_template_string(html_content)
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        if username in users and check_password_hash(users[username], password):
-            session['username'] = username
-            return redirect(url_for('chat'))
-        return "Invalid credentials", 403
-    return render_template_string(html_content, logged_in=False, username='', is_admin=False)
+    username = request.form['username']
+    password = request.form['password']
+    conn = sqlite3.connect('data.db')
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE username=?", (username,))
+    row = c.fetchone()
+    conn.close()
+    if row and check_password_hash(row[0], password):
+        session['username'] = username
+        return redirect('/')
+    return "Invalid credentials", 403
 
 @app.route('/logout')
 def logout():
     session.pop('username', None)
     return redirect(url_for('index'))
 
+@app.route('/')
+def index():
+    if 'username' in session:
+        return redirect(url_for('chat'))
+    return render_template_string(html_content)
+
 @app.route('/chat')
 def chat():
     if 'username' not in session:
-        return redirect(url_for('login'))
-    username = escape(session['username'])
-    return render_template_string(html_content,
-                                   logged_in=True,
-                                   username=username,
-                                   is_admin=(username == ADMIN_USERNAME))
-
-@app.route('/get_messages')
-def get_messages():
-    return jsonify(messages)
+        return redirect(url_for('index'))
+    return render_template_string(html_content)
 
 @app.route('/ban_user', methods=['POST'])
 def ban_user():
-    if 'username' in session and session['username'] == ADMIN_USERNAME:
-        username_to_ban = request.form['username']
-        if username_to_ban not in banned_users:
-            banned_users.append(username_to_ban)
-            return jsonify({'status': f'{username_to_ban} is banned'})
-        return jsonify({'error': 'Already banned'}), 400
-    return jsonify({'error': 'Not authorized'}), 403
+    if session.get('username') == ADMIN_USERNAME:
+        username = request.form['username']
+        conn = sqlite3.connect('data.db')
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO banned VALUES (?)", (username,))
+        conn.commit()
+        conn.close()
+        return jsonify({'status': f'{username} banned'})
+    return jsonify({'error': 'unauthorized'}), 403
 
 @app.route('/unban_user', methods=['POST'])
 def unban_user():
-    if 'username' in session and session['username'] == ADMIN_USERNAME:
-        username_to_unban = request.form['username']
-        if username_to_unban in banned_users:
-            banned_users.remove(username_to_unban)
-            return jsonify({'status': f'{username_to_unban} is unbanned'})
-        return jsonify({'error': 'User not banned'}), 400
-    return jsonify({'error': 'Not authorized'}), 403
+    if session.get('username') == ADMIN_USERNAME:
+        username = request.form['username']
+        conn = sqlite3.connect('data.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM banned WHERE username=?", (username,))
+        conn.commit()
+        conn.close()
+        return jsonify({'status': f'{username} unbanned'})
+    return jsonify({'error': 'unauthorized'}), 403
 
 @socketio.on('send_message')
 def handle_send_message(data):
     username = data['username']
     message = data['message']
-    if username in banned_users:
-        emit('new_message', {'error': 'You are banned.'}, broadcast=True)
+    conn = sqlite3.connect('data.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM banned WHERE username=?", (username,))
+    banned_user = c.fetchone()
+    conn.close()
+    if banned_user:
+        emit('new_message', {'error': 'You are banned from sending messages.'}, broadcast=True)
         return
     messages.append({'username': username, 'text': message})
-    emit('new_message', {}, broadcast=True)
+    emit('new_message', {'messages': messages}, broadcast=True)
 
-if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000)
+if __name__ == '__main__':
+    init_db()
+    socketio.run(app, host='0.0.0.0', port=5000)
