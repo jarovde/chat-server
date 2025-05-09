@@ -8,6 +8,12 @@ socketio = SocketIO(app)  # Voeg SocketIO toe aan de app
 # Lijst om berichten op te slaan
 messages = []
 
+# Banned users list (alleen jij kunt deze bewerken)
+banned_users = []
+
+# Admin gebruikersnaam (vervang dit met jouw gebruikersnaam)
+ADMIN_USERNAME = 'admin'
+
 # HTML-template voor de frontend
 html_content = """
 <!DOCTYPE html>
@@ -90,23 +96,4 @@ html_content = """
                         const messageElement = document.createElement('p');
                         messageElement.textContent = message.username + ": " + message.text;
                         messagesDiv.appendChild(messageElement);
-                    });
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;  // Scroll naar beneden
-                });
-        }
-
-        // Functie om een bericht naar de server te sturen
-        function sendMessage() {
-            const messageInput = document.getElementById('messageInput');
-            const username = document.getElementById('username').value;
-            const message = messageInput.value;
-            if (message && username) {
-                socket.emit('send_message', { username: username, message: message });
-                messageInput.value = '';  // Maak het invoerveld leeg
-            } else {
-                alert("Please enter a message.");
-            }
-        }
-
-        // Ontvang berichten van
 
