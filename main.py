@@ -74,6 +74,28 @@ html_content = """
         <button onclick="sendMessage()">Send</button>
     </div>
 
+    <div id="admin-panel" style="display:none;">
+        <h2>Admin Control Panel</h2>
+        <h3>Ban a user</h3>
+        <form action="/ban_user" method="POST">
+            <label for="ban_username">Username:</label><br>
+            <input type="text" id="ban_username" name="username" required><br><br>
+            <button type="submit">Ban User</button>
+        </form>
+        <h3>Unban a user</h3>
+        <form action="/unban_user" method="POST">
+            <label for="unban_username">Username:</label><br>
+            <input type="text" id="unban_username" name="username" required><br><br>
+            <button type="submit">Unban User</button>
+        </form>
+        <h3>Manage Users</h3>
+        <ul>
+            {% for user in users %}
+                <li>{{ user[0] }} - <a href="/delete_user/{{ user[0] }}">Delete</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+
     <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script>
         const socket = io.connect('http://' + document.domain + ':' + location.port);
@@ -131,7 +153,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Invoer naar de database voor gebruikers, IP-adressen en bannen
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -214,17 +235,19 @@ def unban_user():
 def handle_send_message(data):
     username = data['username']
     message = data['message']
+    # Controleer of de gebruiker op de banlijst staat
     conn = sqlite3.connect('data.db')
     c = conn.cursor()
     c.execute("SELECT * FROM banned WHERE username=?", (username,))
-    banned_user = c.fetchone()
-    conn.close()
-    if banned_user:
+    if c.fetchone():
         emit('new_message', {'error': 'You are banned from sending messages.'}, broadcast=True)
         return
-    messages.append({'username': username, 'text': message})
-    emit('new_message', {'messages': messages}, broadcast=True)
+    conn.close()
 
-if __name__ == '__main__':
+    messages.append({'username': username, 'text': message})
+    emit('new_message', {'messages': messages}, broadcast=True)  # Stuur de nieuwe berichten naar alle clients
+
+if __name__ == "__main__":
     init_db()
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True)
+
