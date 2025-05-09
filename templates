@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Application</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+        }
+        input[type="text"] {
+            width: 80%;
+            padding: 10px;
+        }
+        button {
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Chat Application</h1>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        // Functie om berichten op te halen van de server
+        function loadMessages() {
+            fetch('/get_messages')
+                .then(response => response.json())
+                .then(data => {
+                    const messagesDiv = document.getElementById('messages');
+                    messagesDiv.innerHTML = '';  // Verwijder oude berichten
+                    data.forEach(message => {
+                        const messageElement = document.createElement('p');
+                        messageElement.textContent = message;
+                        messagesDiv.appendChild(messageElement);
+                    });
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;  // Scroll naar beneden
+                });
+        }
+
+        // Functie om een bericht naar de server te sturen
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value;
+            if (message) {
+                fetch('/send', {
+                    method: 'POST',
+                    body: new URLSearchParams({ message: message }),
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                })
+                .then(response => response.json())
+                .then(() => {
+                    loadMessages();  // Herlaad berichten
+                    messageInput.value = '';  // Maak het invoerveld leeg
+                });
+            }
+        }
+
+        // Laad berichten wanneer de pagina wordt geladen
+        window.onload = loadMessages;
+    </script>
+</body>
+</html>
