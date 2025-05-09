@@ -1,1 +1,34 @@
+from flask import Flask, request, jsonify, send_from_directory
+app = Flask(__name__)
 
+# Admin login (voor demo, wachtwoord check is hardcoded)
+@app.route('/admin/login', methods=['POST'])
+def admin_login():
+    data = request.get_json()
+    if data['password'] == 'jouw_admin_wachtwoord':
+        return jsonify(success=True)
+    return jsonify(success=False)
+
+# Dummy users lijst
+users = [
+    {"email": "user1@example.com", "banned": False},
+    {"email": "user2@example.com", "banned": True},
+]
+
+@app.route('/admin/users')
+def get_users():
+    return jsonify(users)
+
+@app.route('/admin/ban', methods=['POST'])
+def ban_user():
+    data = request.get_json()
+    for user in users:
+        if user['email'] == data['email']:
+            user['banned'] = data['ban']
+            break
+    return jsonify(success=True)
+
+# Webclient hosten
+@app.route('/admin')
+def admin_page():
+    return send_from_directory('.', 'admin.html')  # of pad naar je HTML-bestand
