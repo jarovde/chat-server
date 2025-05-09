@@ -1,0 +1,40 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #111; color: #fff; }
+        #chat { width: 500px; height: 400px; overflow-y: auto; margin-bottom: 20px; background-color: #222; padding: 10px; }
+        #message { width: 100%; padding: 10px; border: 1px solid #555; background-color: #333; color: #fff; }
+        button { padding: 10px 20px; background-color: #007bff; border: none; color: white; }
+    </style>
+</head>
+<body>
+    <div id="chat"></div>
+    <input type="text" id="message" placeholder="Type a message..." />
+    <button id="sendBtn">Send</button>
+
+    <script>
+        const socket = io.connect('http://127.0.0.1:5000');  // Zorg ervoor dat dit overeenkomt met je server
+
+        // Functie om berichten naar het scherm te sturen
+        socket.on('chat_message', function(message) {
+            const chat = document.getElementById('chat');
+            const messageElement = document.createElement('div');
+            messageElement.textContent = message;
+            chat.appendChild(messageElement);
+        });
+
+        // Functie om berichten te verzenden
+        document.getElementById('sendBtn').onclick = function() {
+            const message = document.getElementById('message').value;
+            socket.emit('chat_message', message);  // Bericht verzenden naar de server
+            document.getElementById('message').value = '';  // Input resetten
+        };
+    </script>
+</body>
+</html>
