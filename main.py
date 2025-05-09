@@ -1,253 +1,96 @@
-import sqlite3
-from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from werkzeug.security import generate_password_hash, check_password_hash
+import uuid
+import hashlib
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'  # Zorg voor een geheime sleutel voor sessies
-socketio = SocketIO(app)  # Voeg SocketIO toe aan de app
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Admin gebruikersnaam
-ADMIN_USERNAME = 'jarovde'
+# In-memory opslag
+users = {}
+banned_devices = set()
 
-# HTML-template voor de frontend
-html_content = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat Application</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 20px;
-        }
-        #messages {
-            border: 1px solid #ccc;
-            padding: 10px;
-            height: 300px;
-            overflow-y: scroll;
-        }
-        input[type="text"] {
-            width: 80%;
-            padding: 10px;
-        }
-        button {
-            padding: 10px;
-        }
-    </style>
-</head>
-<body>
-    <h1>Chat Application</h1>
-    
-    <!-- Login sectie -->
-    <div id="login-section">
-        <h2>Login</h2>
-        <form action="/login" method="POST">
-            <label for="username">Username:</label><br>
-            <input type="text" id="username" name="username" required><br><br>
-            <label for="password">Password:</label><br>
-            <input type="password" id="password" name="password" required><br><br>
-            <button type="submit">Login</button>
-        </form>
-        <p>Don't have an account? <a href="/register">Register here</a></p>
-    </div>
+# Beveiliging: wachtwoorden hashen
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-    <!-- Register sectie -->
-    <div id="register-section" style="display:none;">
-        <h2>Register</h2>
-        <form action="/register" method="POST">
-            <label for="new_username">Username:</label><br>
-            <input type="text" id="new_username" name="username" required><br><br>
-            <label for="new_password">Password:</label><br>
-            <input type="password" id="new_password" name="password" required><br><br>
-            <button type="submit">Register</button>
-        </form>
-        <p>Already have an account? <a href="/">Login here</a></p>
-    </div>
+# Unieke apparaat-ID opvragen via header (bijv. via app)
+def get_device_id():
+    return request.headers.get('X-Device-ID')
 
-    <div id="chat-section" style="display:none;">
-        <h2>Chat Room</h2>
-        <div id="messages"></div>
-        <input type="text" id="messageInput" placeholder="Type a message...">
-        <button onclick="sendMessage()">Send</button>
-    </div>
-
-    <div id="admin-panel" style="display:none;">
-        <h2>Admin Control Panel</h2>
-        <h3>Ban a user</h3>
-        <form action="/ban_user" method="POST">
-            <label for="ban_username">Username:</label><br>
-            <input type="text" id="ban_username" name="username" required><br><br>
-            <button type="submit">Ban User</button>
-        </form>
-        <h3>Unban a user</h3>
-        <form action="/unban_user" method="POST">
-            <label for="unban_username">Username:</label><br>
-            <input type="text" id="unban_username" name="username" required><br><br>
-            <button type="submit">Unban User</button>
-        </form>
-        <h3>Manage Users</h3>
-        <ul>
-            {% for user in users %}
-                <li>{{ user[0] }} - <a href="/delete_user/{{ user[0] }}">Delete</a></li>
-            {% endfor %}
-        </ul>
-    </div>
-
-    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
-    <script>
-        const socket = io.connect('http://' + document.domain + ':' + location.port);
-
-        // Functie om berichten op te halen van de server
-        function loadMessages() {
-            fetch('/get_messages')
-                .then(response => response.json())
-                .then(data => {
-                    const messagesDiv = document.getElementById('messages');
-                    messagesDiv.innerHTML = '';  // Verwijder oude berichten
-                    data.forEach(message => {
-                        const messageElement = document.createElement('p');
-                        messageElement.textContent = message.username + ": " + message.text;
-                        messagesDiv.appendChild(messageElement);
-                    });
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;  // Scroll naar beneden
-                });
-        }
-
-        // Functie om een bericht naar de server te sturen
-        function sendMessage() {
-            const messageInput = document.getElementById('messageInput');
-            const username = document.getElementById('username').value;
-            const message = messageInput.value;
-            if (message && username) {
-                socket.emit('send_message', { username: username, message: message });
-                messageInput.value = '';  // Maak het invoerveld leeg
-            } else {
-                alert("Please enter a message.");
-            }
-        }
-
-        // Ontvang berichten van de server in real-time
-        socket.on('new_message', function(data) {
-            loadMessages();
-        });
-
-        // Laad berichten wanneer de pagina wordt geladen
-        window.onload = function() {
-            loadMessages();
-            setInterval(loadMessages, 2000);  // Haal elke 2 seconden nieuwe berichten op
-        };
-    </script>
-</body>
-</html>
-"""
-
-def init_db():
-    conn = sqlite3.connect('data.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS ips (ip TEXT PRIMARY KEY, username TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS banned (username TEXT PRIMARY KEY)''')
-    conn.commit()
-    conn.close()
-
-@app.route('/register', methods=['GET', 'POST'])
+# Alleen 1 account per device toestaan
+@app.route('/register', methods=['POST'])
 def register():
-    if request.method == 'POST':
-        ip = request.remote_addr
-        conn = sqlite3.connect('data.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM ips WHERE ip=?", (ip,))
-        if c.fetchone():
-            conn.close()
-            return "This device already registered an account.", 403
-        username = request.form['username']
-        password = request.form['password']
-        c.execute("SELECT * FROM users WHERE username=?", (username,))
-        if c.fetchone():
-            conn.close()
-            return "Username already exists", 400
-        c.execute("INSERT INTO users VALUES (?, ?)", (username, generate_password_hash(password)))
-        c.execute("INSERT INTO ips VALUES (?, ?)", (ip, username))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('login'))
-    return render_template_string(html_content)
+    data = request.json
+    username = data['username']
+    password = data['password']
+    device_id = get_device_id()
+
+    if device_id in banned_devices:
+        return jsonify({"success": False, "error": "Dit apparaat is geblokkeerd."}), 403
+
+    if device_id in [u['device_id'] for u in users.values()]:
+        return jsonify({"success": False, "error": "Er is al een account geregistreerd op dit apparaat."}), 403
+
+    if username in users:
+        return jsonify({"success": False, "error": "Gebruikersnaam bestaat al."}), 400
+
+    users[username] = {
+        'password': hash_password(password),
+        'device_id': device_id,
+        'is_admin': False
+    }
+    return jsonify({"success": True}), 200
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form['username']
-    password = request.form['password']
-    conn = sqlite3.connect('data.db')
-    c = conn.cursor()
-    c.execute("SELECT password FROM users WHERE username=?", (username,))
-    row = c.fetchone()
-    conn.close()
-    if row and check_password_hash(row[0], password):
-        session['username'] = username
-        return redirect('/')
-    return "Invalid credentials", 403
-
-@app.route('/logout')
-def logout():
-    session.pop('username', None)
-    return redirect(url_for('index'))
-
-@app.route('/')
-def index():
-    if 'username' in session:
-        return redirect(url_for('chat'))
-    return render_template_string(html_content)
-
-@app.route('/chat')
-def chat():
-    if 'username' not in session:
-        return redirect(url_for('index'))
-    return render_template_string(html_content)
-
-@app.route('/ban_user', methods=['POST'])
-def ban_user():
-    if session.get('username') == ADMIN_USERNAME:
-        username = request.form['username']
-        conn = sqlite3.connect('data.db')
-        c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO banned VALUES (?)", (username,))
-        conn.commit()
-        conn.close()
-        return jsonify({'status': f'{username} banned'})
-    return jsonify({'error': 'unauthorized'}), 403
-
-@app.route('/unban_user', methods=['POST'])
-def unban_user():
-    if session.get('username') == ADMIN_USERNAME:
-        username = request.form['username']
-        conn = sqlite3.connect('data.db')
-        c = conn.cursor()
-        c.execute("DELETE FROM banned WHERE username=?", (username,))
-        conn.commit()
-        conn.close()
-        return jsonify({'status': f'{username} unbanned'})
-    return jsonify({'error': 'unauthorized'}), 403
-
-@socketio.on('send_message')
-def handle_send_message(data):
+    data = request.json
     username = data['username']
-    message = data['message']
-    # Controleer of de gebruiker op de banlijst staat
-    conn = sqlite3.connect('data.db')
-    c = conn.cursor()
-    c.execute("SELECT * FROM banned WHERE username=?", (username,))
-    if c.fetchone():
-        emit('new_message', {'error': 'You are banned from sending messages.'}, broadcast=True)
-        return
-    conn.close()
+    password = data['password']
+    device_id = get_device_id()
 
-    messages.append({'username': username, 'text': message})
-    emit('new_message', {'messages': messages}, broadcast=True)  # Stuur de nieuwe berichten naar alle clients
+    if device_id in banned_devices:
+        return jsonify({"success": False, "error": "Apparaat is geblokkeerd."}), 403
 
-if __name__ == "__main__":
-    init_db()
-    socketio.run(app, debug=True)
+    user = users.get(username)
+    if not user or user['password'] != hash_password(password):
+        return jsonify({"success": False, "error": "Ongeldige login"}), 403
 
+    return jsonify({"success": True, "is_admin": user.get("is_admin", False)}), 200
+
+@app.route('/admin/ban', methods=['POST'])
+def ban_device():
+    data = request.json
+    username = data['admin']
+    password = data['password']
+    device_to_ban = data['device_id']
+
+    admin = users.get(username)
+    if not admin or admin['password'] != hash_password(password) or not admin.get("is_admin", False):
+        return jsonify({"success": False, "error": "Geen toegang"}), 403
+
+    banned_devices.add(device_to_ban)
+    return jsonify({"success": True, "banned": list(banned_devices)})
+
+@app.route('/admin/make_admin', methods=['POST'])
+def make_admin():
+    data = request.json
+    admin_user = data['admin']
+    password = data['password']
+    target = data['target']
+
+    admin = users.get(admin_user)
+    if not admin or admin['password'] != hash_password(password) or not admin.get("is_admin", False):
+        return jsonify({"success": False, "error": "Geen toegang"}), 403
+
+    if target not in users:
+        return jsonify({"success": False, "error": "Doelgebruiker bestaat niet."}), 404
+
+    users[target]["is_admin"] = True
+    return jsonify({"success": True})
+
+@socketio.on('message')
+def handle_message(data):
+    emit('message', data, broadcast=True)
