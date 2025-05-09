@@ -1,88 +1,120 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_socketio import SocketIO, send, emit
+from flask_cors import CORS
 import sqlite3
 import os
 
 app = Flask(__name__)
+CORS(app)
 
-# Bestandslocatie voor SQLite database
-DATABASE = 'users.db'
+# Configuratie
+app.config['SECRET_KEY'] = 'your_secret_key_here'
+socketio = SocketIO(app)
 
-# Functie om de database te verbinden
+# Database bestand
+DATABASE = 'chat_app.db'
+
+# Functie voor databaseverbinding
 def get_db():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
-# Functie om de database te initialiseren (maak de tabel indien deze nog niet bestaat)
+# Functie om database in te stellen
 def init_db():
     if not os.path.exists(DATABASE):
         with get_db() as conn:
             conn.execute('''CREATE TABLE users (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            email TEXT UNIQUE NOT NULL,
-                            banned BOOLEAN DEFAULT 0)''')
+                            username TEXT UNIQUE NOT NULL,
+                            password TEXT NOT NULL)''')
+            conn.execute('''CREATE TABLE messages (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            username TEXT NOT NULL,
+                            message TEXT NOT NULL,
+                            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
             conn.commit()
 
+# Initialiseer de database bij opstarten
 init_db()
 
-# Admin wachtwoord voor login
-admin_password = "admin123"  # Pas dit wachtwoord aan naar wens
+# Admin wachtwoord voor toegang
+admin_password = 'admin123'
 
-# Route voor login van admin
-@app.route('/admin/login', methods=['POST'])
-def admin_login():
-    data = request.get_json()
-    if data['password'] == admin_password:
-        return jsonify(success=True)
-    return jsonify(success=False)
+# Route voor loginpagina
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        with get_db() as conn:
+            user = conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (username, password)).fetchone()
+            if user:
+                session['user'] = username
+                return redirect(url_for('chat'))
+            else:
+                return 'Foutieve gebruikersnaam of wachtwoord', 401
+    return render_template('login.html')
 
-# Route om alle gebruikers op te halen
-@app.route('/admin/users', methods=['GET'])
-def get_users():
+# Route voor registratie van gebruikers
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        with get_db() as conn:
+            try:
+                conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, password))
+                conn.commit()
+                return redirect(url_for('login'))
+            except sqlite3.IntegrityError:
+                return 'Gebruikersnaam bestaat al', 409
+    return render_template('register.html')
+
+# Route voor het chatvenster
+@app.route('/chat')
+def chat():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    return render_template('chat.html', username=session['user'])
+
+# Functie om berichten te versturen
+@socketio.on('message')
+def handle_message(msg):
     with get_db() as conn:
-        users = conn.execute('SELECT * FROM users').fetchall()
-    users_list = [{"email": user["email"], "banned": user["banned"]} for user in users]
-    return jsonify(users_list)
-
-# Route voor het bannen of deblokkeren van een gebruiker
-@app.route('/admin/ban', methods=['POST'])
-def ban_user():
-    data = request.get_json()
-    with get_db() as conn:
-        conn.execute('UPDATE users SET banned = ? WHERE email = ?', (data['ban'], data['email']))
+        conn.execute('INSERT INTO messages (username, message) VALUES (?, ?)', (session['user'], msg))
         conn.commit()
-    return jsonify(success=True)
+    send(msg, broadcast=True)
 
-# Route om een gebruiker toe te voegen
-@app.route('/admin/add_user', methods=['POST'])
-def add_user():
-    data = request.get_json()
+# Functie voor berichten ophalen
+@app.route('/messages', methods=['GET'])
+def get_messages():
     with get_db() as conn:
-        try:
-            conn.execute('INSERT INTO users (email) VALUES (?)', (data['email'],))
-            conn.commit()
-            return jsonify(success=True)
-        except sqlite3.IntegrityError:
-            return jsonify(success=False, error="User already exists.")
+        messages = conn.execute('SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50').fetchall()
+    return jsonify([dict(message) for message in messages])
 
-# Route om een gebruiker te verwijderen
-@app.route('/admin/delete_user', methods=['POST'])
-def delete_user():
-    data = request.get_json()
-    with get_db() as conn:
-        conn.execute('DELETE FROM users WHERE email = ?', (data['email'],))
-        conn.commit()
-    return jsonify(success=True)
+# Functie om uit te loggen
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect(url_for('login'))
 
-# Route om de adminpagina weer te geven (HTML)
-@app.route('/admin')
-def admin_page():
-    return send_from_directory('.', 'admin.html')
+# Admin route
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    if request.method == 'POST':
+        password = request.form['password']
+        if password == admin_password:
+            return redirect(url_for('admin_panel'))
+        else:
+            return 'Foutief wachtwoord', 401
+    return render_template('admin_login.html')
 
-# Route voor de hoofdpagina
-@app.route('/')
-def home():
-    return 'Welkom bij de chatserver!'
+# Admin panel route (beheren van berichten en gebruikers)
+@app.route('/admin/panel')
+def admin_panel():
+    return render_template('admin_panel.html')
 
+# Start de Flask app
 if __name__ == '__main__':
-    app.run(debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000)
