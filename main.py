@@ -1,21 +1,13 @@
 import os
-import zipfile
 from flask import Flask, render_template, request, redirect, url_for, session
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
-# Extract templates.zip if not yet unpacked
-if not os.path.exists("templates"):
-    with zipfile.ZipFile("templates.zip", 'r') as zip_ref:
-        zip_ref.extractall("templates")
-
-# Config
 app = Flask(__name__, template_folder="templates")
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev_secret_key")  # Gebruik omgevingsvariabele in productie
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev_secret_key")
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Dummy users (vervang door database in echte apps)
 users = {
     "admin": {"password": "admin123", "is_admin": True},
     "user1": {"password": "pass1", "is_admin": False},
@@ -68,7 +60,6 @@ def handle_message(data):
     print(f"Ontvangen bericht: {data}")
     emit('message', data, broadcast=True)
 
-# Alleen lokaal gebruiken: in productie gebruikt Render gunicorn via requirements.txt
 if __name__ == '__main__':
     is_local = os.environ.get("FLASK_ENV") != "production"
-    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=is_local)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=true)
