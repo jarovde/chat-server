@@ -62,4 +62,4 @@ def handle_message(data):
 
 if __name__ == '__main__':
     is_local = os.environ.get("FLASK_ENV") != "production"
-    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=true)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
